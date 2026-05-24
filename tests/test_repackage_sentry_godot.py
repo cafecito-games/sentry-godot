@@ -22,6 +22,11 @@ macos.release = "res://addons/sentry/bin/macos/libsentry.macos.release.dylib"
 
 windows.debug.x86_64 = "res://addons/sentry/bin/windows/x86_64/libsentry.windows.debug.x86_64.dll"
 linux.debug.x86_64 = "res://addons/sentry/bin/linux/x86_64/libsentry.linux.debug.x86_64.so"
+linux.release.x86_64 = "res://addons/sentry/bin/linux/x86_64/libsentry.linux.release.x86_64.so"
+linux.debug.x86_32 = "res://addons/sentry/bin/linux/x86_32/libsentry.linux.debug.x86_32.so"
+linux.release.x86_32 = "res://addons/sentry/bin/linux/x86_32/libsentry.linux.release.x86_32.so"
+linux.debug.arm64 = "res://addons/sentry/bin/linux/arm64/libsentry.linux.debug.arm64.so"
+linux.release.arm64 = "res://addons/sentry/bin/linux/arm64/libsentry.linux.release.arm64.so"
 
 android.debug.arm64 = "res://addons/sentry/bin/android/libsentry.android.debug.arm64.so"
 android.release.arm64 = "res://addons/sentry/bin/android/libsentry.android.release.arm64.so"
@@ -35,6 +40,18 @@ web.debug.wasm32 = "res://addons/sentry/bin/web/libsentry.web.debug.wasm32.wasm"
 linux.debug.rv64 = "res://addons/sentry/bin/noop/libsentry.linux.debug.rv64.so"
 
 [dependencies]
+
+linux.x86_64 = {
+    "res://addons/sentry/bin/linux/x86_64/crashpad_handler" : ""
+}
+
+linux.x86_32 = {
+    "res://addons/sentry/bin/linux/x86_32/crashpad_handler" : ""
+}
+
+linux.arm64 = {
+    "res://addons/sentry/bin/linux/arm64/crashpad_handler" : ""
+}
 
 windows.x86_64 = {
     "res://addons/sentry/bin/windows/x86_64/crashpad_handler.exe" : "",
@@ -100,6 +117,24 @@ class GDExtensionFilteringTests(unittest.TestCase):
         self.assertNotIn("bin/noop", filtered)
         self.assertNotIn("noop", filtered)
 
+    def test_filter_can_keep_only_linux_x86_64_entries(self):
+        filtered = repackage.filter_gdextension_text(
+            SAMPLE_GDEXTENSION,
+            ["linux.x86_64"],
+        )
+
+        self.assertIn("linux.debug.x86_64", filtered)
+        self.assertIn("linux.release.x86_64", filtered)
+        self.assertIn("res://addons/sentry/bin/linux/x86_64/crashpad_handler", filtered)
+        self.assertNotIn("linux.debug.x86_32", filtered)
+        self.assertNotIn("linux.release.x86_32", filtered)
+        self.assertNotIn("linux.debug.arm64", filtered)
+        self.assertNotIn("linux.release.arm64", filtered)
+        self.assertNotIn("res://addons/sentry/bin/linux/x86_32", filtered)
+        self.assertNotIn("res://addons/sentry/bin/linux/arm64", filtered)
+        self.assertNotIn("linux.debug.rv64", filtered)
+        self.assertNotIn("bin/noop", filtered)
+
     def test_filter_rejects_requested_platform_without_libraries(self):
         with self.assertRaisesRegex(repackage.RepackageError, "visionos"):
             repackage.filter_gdextension_text(
@@ -127,6 +162,14 @@ def create_addon_zip(path: Path, gdextension_text: str = SAMPLE_GDEXTENSION, omi
         "addons/sentry/bin/windows/x86_64/crashpad_handler.exe": "windows dependency",
         "addons/sentry/bin/windows/x86_64/crashpad_wer.dll": "windows dependency",
         "addons/sentry/bin/linux/x86_64/libsentry.linux.debug.x86_64.so": "linux",
+        "addons/sentry/bin/linux/x86_64/libsentry.linux.release.x86_64.so": "linux",
+        "addons/sentry/bin/linux/x86_64/crashpad_handler": "linux dependency",
+        "addons/sentry/bin/linux/x86_32/libsentry.linux.debug.x86_32.so": "linux",
+        "addons/sentry/bin/linux/x86_32/libsentry.linux.release.x86_32.so": "linux",
+        "addons/sentry/bin/linux/x86_32/crashpad_handler": "linux dependency",
+        "addons/sentry/bin/linux/arm64/libsentry.linux.debug.arm64.so": "linux",
+        "addons/sentry/bin/linux/arm64/libsentry.linux.release.arm64.so": "linux",
+        "addons/sentry/bin/linux/arm64/crashpad_handler": "linux dependency",
         "addons/sentry/bin/web/libsentry.web.debug.wasm32.wasm": "web",
         "addons/sentry/bin/noop/libsentry.linux.debug.rv64.so": "noop",
         "addons/sentry/bin/visionos/libsentry.visionos.debug.xcframework/Info.plist": "visionos",
@@ -170,6 +213,33 @@ class ArchiveRepackagingTests(unittest.TestCase):
         self.assertNotIn("linux", gdextension.lower())
         self.assertNotIn("web", gdextension.lower())
         self.assertNotIn("noop", gdextension.lower())
+
+    def test_repackage_archive_keeps_only_requested_linux_x86_64_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_zip = Path(temp_dir) / "input.zip"
+            output_zip = Path(temp_dir) / "output.zip"
+            create_addon_zip(input_zip)
+
+            repackage.repackage_archive(input_zip, output_zip, ["linux.x86_64"])
+
+            with zipfile.ZipFile(output_zip) as archive:
+                names = set(archive.namelist())
+                gdextension = archive.read("addons/sentry/sentry.gdextension").decode("utf-8")
+
+        self.assertIn("addons/sentry/bin/linux/x86_64/libsentry.linux.debug.x86_64.so", names)
+        self.assertIn("addons/sentry/bin/linux/x86_64/libsentry.linux.release.x86_64.so", names)
+        self.assertIn("addons/sentry/bin/linux/x86_64/crashpad_handler", names)
+        self.assertFalse(any(name.startswith("addons/sentry/bin/linux/x86_32/") for name in names))
+        self.assertFalse(any(name.startswith("addons/sentry/bin/linux/arm64/") for name in names))
+        self.assertIn("linux.debug.x86_64", gdextension)
+        self.assertIn("linux.release.x86_64", gdextension)
+        self.assertIn("linux.x86_64", gdextension)
+        self.assertNotIn("linux.debug.x86_32", gdextension)
+        self.assertNotIn("linux.release.x86_32", gdextension)
+        self.assertNotIn("linux.debug.arm64", gdextension)
+        self.assertNotIn("linux.release.arm64", gdextension)
+        self.assertNotIn("linux.x86_32", gdextension)
+        self.assertNotIn("linux.arm64", gdextension)
 
     def test_repackage_archive_removes_unknown_future_platform_bin_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:

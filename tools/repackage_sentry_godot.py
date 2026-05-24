@@ -21,19 +21,88 @@ SUPPORTED_PLATFORMS = {"android", "ios", "linux", "macos", "web", "windows"}
 NOOP_PLATFORM = "noop"
 
 
+class PlatformSelection:
+    def __init__(
+        self,
+        all_platforms: frozenset[str],
+        architectures_by_platform: dict[str, frozenset[str]],
+        requested_specs: frozenset[str],
+    ) -> None:
+        self.all_platforms = all_platforms
+        self.architectures_by_platform = architectures_by_platform
+        self.requested_specs = requested_specs
+
+    @property
+    def platforms(self) -> set[str]:
+        return set(self.all_platforms) | set(self.architectures_by_platform)
+
+    def matching_specs(self, key: str) -> set[str]:
+        platform = platform_prefix(key)
+        if platform in self.all_platforms:
+            return {platform}
+
+        requested_architectures = self.architectures_by_platform.get(platform)
+        if requested_architectures is None:
+            return set()
+
+        architecture = entry_architecture(key)
+        if architecture in requested_architectures:
+            return {f"{platform}.{architecture}"}
+        return set()
+
+    def matches_entry(self, key: str) -> bool:
+        return bool(self.matching_specs(key))
+
+
 class RepackageError(RuntimeError):
     """Raised when an addon archive cannot be safely repackaged."""
 
 
-def normalize_platforms(platforms: Iterable[str]) -> set[str]:
-    normalized = {platform.strip().lower() for platform in platforms if platform.strip()}
-    if not normalized:
+def normalize_platforms(platforms: Iterable[str]) -> PlatformSelection:
+    all_platforms: set[str] = set()
+    architectures_by_platform: dict[str, set[str]] = {}
+    requested_specs: set[str] = set()
+
+    for raw_platform in platforms:
+        spec = raw_platform.strip().lower()
+        if not spec:
+            continue
+
+        parts = spec.split(".")
+        if len(parts) > 2 or not all(parts):
+            raise RepackageError(f"Invalid platform spec: {raw_platform}")
+
+        platform = parts[0]
+        requested_specs.add(spec)
+        if len(parts) == 1:
+            all_platforms.add(platform)
+            architectures_by_platform.pop(platform, None)
+            continue
+
+        if platform not in all_platforms:
+            architectures_by_platform.setdefault(platform, set()).add(parts[1])
+
+    if not requested_specs:
         raise RepackageError("At least one platform must be requested")
-    return normalized
+
+    frozen_architectures = {
+        platform: frozenset(architectures)
+        for platform, architectures in architectures_by_platform.items()
+    }
+    return PlatformSelection(frozenset(all_platforms), frozen_architectures, frozenset(requested_specs))
 
 
 def platform_prefix(key: str) -> str:
     return key.strip().split(".", 1)[0]
+
+
+def entry_architecture(key: str) -> str | None:
+    parts = key.strip().split(".")
+    if len(parts) == 2:
+        return parts[1]
+    if len(parts) >= 3:
+        return parts[2]
+    return None
 
 
 def section_name(line: str) -> str | None:
@@ -75,27 +144,27 @@ def mentions_removed_platform(line: str, keep_platforms: set[str]) -> bool:
     return any(token in normalized_line for token in removed_tokens)
 
 
-def filter_section_entries(lines: list[str], keep_platforms: set[str]) -> tuple[list[str], set[str]]:
+def filter_section_entries(lines: list[str], keep_selection: PlatformSelection) -> tuple[list[str], set[str]]:
     output: list[str] = []
-    kept_platforms: set[str] = set()
+    kept_specs: set[str] = set()
     index = 0
 
     while index < len(lines):
         key = entry_key(lines[index])
         if key is None:
-            if not mentions_removed_platform(lines[index], keep_platforms):
+            if not mentions_removed_platform(lines[index], keep_selection.platforms):
                 output.append(lines[index])
             index += 1
             continue
 
         entry, next_index = read_entry(lines, index)
-        platform = platform_prefix(key)
-        if platform in keep_platforms and not entry_mentions_noop(entry):
+        matching_specs = keep_selection.matching_specs(key)
+        if matching_specs and not entry_mentions_noop(entry):
             output.extend(entry)
-            kept_platforms.add(platform)
+            kept_specs.update(matching_specs)
         index = next_index
 
-    return output, kept_platforms
+    return output, kept_specs
 
 
 def split_sections(text: str) -> list[tuple[str | None, list[str]]]:
@@ -120,25 +189,25 @@ def split_sections(text: str) -> list[tuple[str | None, list[str]]]:
 
 
 def filter_gdextension_text(text: str, platforms: Iterable[str]) -> str:
-    keep_platforms = normalize_platforms(platforms)
+    keep_selection = platforms if isinstance(platforms, PlatformSelection) else normalize_platforms(platforms)
     output: list[str] = []
-    kept_library_platforms: set[str] = set()
+    kept_library_specs: set[str] = set()
 
     for name, section_lines in split_sections(text):
         if name in {"libraries", "dependencies"}:
             header = section_lines[:1]
             body = section_lines[1:]
-            filtered_body, kept_platforms = filter_section_entries(body, keep_platforms)
+            filtered_body, kept_specs = filter_section_entries(body, keep_selection)
             if name == "libraries":
-                kept_library_platforms.update(kept_platforms)
+                kept_library_specs.update(kept_specs)
             output.extend(header)
             output.extend(filtered_body)
         else:
             output.extend(section_lines)
 
-    missing_platforms = keep_platforms - kept_library_platforms
-    if missing_platforms:
-        missing = ", ".join(sorted(missing_platforms))
+    missing_specs = keep_selection.requested_specs - kept_library_specs
+    if missing_specs:
+        missing = ", ".join(sorted(missing_specs))
         raise RepackageError(f"Requested platform(s) have no library entries: {missing}")
 
     result = "".join(output)
@@ -147,16 +216,16 @@ def filter_gdextension_text(text: str, platforms: Iterable[str]) -> str:
     return result
 
 
-def gdextension_entry_platforms(text: str) -> set[str]:
-    platforms: set[str] = set()
+def gdextension_entry_keys(text: str) -> set[str]:
+    keys: set[str] = set()
     for name, section_lines in split_sections(text):
         if name not in {"libraries", "dependencies"}:
             continue
         for line in section_lines[1:]:
             key = entry_key(line)
             if key is not None:
-                platforms.add(platform_prefix(key))
-    return platforms
+                keys.add(key)
+    return keys
 
 
 def referenced_resource_paths(text: str) -> set[Path]:
@@ -185,31 +254,43 @@ def safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
             shutil.copyfileobj(source, output)
 
 
-def prune_platform_directories(root: Path, keep_platforms: set[str]) -> None:
+def prune_platform_directories(root: Path, keep_selection: PlatformSelection) -> None:
     bin_root = root / BIN_ROOT
     if bin_root.is_dir():
         for child in bin_root.iterdir():
-            if child.is_dir() and child.name not in keep_platforms:
+            if not child.is_dir():
+                continue
+            if child.name not in keep_selection.platforms:
                 shutil.rmtree(child)
+                continue
+            keep_architectures = keep_selection.architectures_by_platform.get(child.name)
+            if keep_architectures is not None and child.name not in keep_selection.all_platforms:
+                for architecture_dir in child.iterdir():
+                    if architecture_dir.is_dir() and architecture_dir.name not in keep_architectures:
+                        shutil.rmtree(architecture_dir)
 
     for platform, directories in SUPPORT_DIRS_BY_PLATFORM.items():
-        if platform in keep_platforms:
+        if platform in keep_selection.platforms:
             continue
         for directory in directories:
             shutil.rmtree(root / directory, ignore_errors=True)
 
 
-def validate_tree(root: Path, keep_platforms: set[str]) -> None:
+def validate_tree(root: Path, keep_selection: PlatformSelection) -> None:
     gdextension_path = root / GDEXTENSION_PATH
     if not gdextension_path.is_file():
         raise RepackageError(f"Missing required file: {GDEXTENSION_PATH}")
 
     gdextension_text = gdextension_path.read_text(encoding="utf-8")
-    removed_platforms = (SUPPORTED_PLATFORMS | {NOOP_PLATFORM}) - keep_platforms
-    remaining_entry_platforms = gdextension_entry_platforms(gdextension_text) & removed_platforms
-    if remaining_entry_platforms:
-        platforms = ", ".join(sorted(remaining_entry_platforms))
-        raise RepackageError(f"gdextension still references removed platform entries: {platforms}")
+    removed_platforms = (SUPPORTED_PLATFORMS | {NOOP_PLATFORM}) - keep_selection.platforms
+    remaining_removed_entries = sorted(
+        key
+        for key in gdextension_entry_keys(gdextension_text)
+        if platform_prefix(key) in (SUPPORTED_PLATFORMS | {NOOP_PLATFORM}) and not keep_selection.matches_entry(key)
+    )
+    if remaining_removed_entries:
+        entries = ", ".join(remaining_removed_entries)
+        raise RepackageError(f"gdextension still references removed platform entries: {entries}")
 
     lowered_text = gdextension_text.lower()
     for platform in sorted(removed_platforms):
@@ -219,15 +300,28 @@ def validate_tree(root: Path, keep_platforms: set[str]) -> None:
     bin_root = root / BIN_ROOT
     if bin_root.is_dir():
         unexpected_bin_dirs = sorted(
-            child.name for child in bin_root.iterdir() if child.is_dir() and child.name not in keep_platforms
+            child.name for child in bin_root.iterdir() if child.is_dir() and child.name not in keep_selection.platforms
         )
         if unexpected_bin_dirs:
             directories = ", ".join(str(BIN_ROOT / name) for name in unexpected_bin_dirs)
             raise RepackageError(f"Removed platform directory remains: {directories}")
 
+        for platform, keep_architectures in keep_selection.architectures_by_platform.items():
+            if platform in keep_selection.all_platforms:
+                continue
+            platform_dir = bin_root / platform
+            if not platform_dir.is_dir():
+                continue
+            unexpected_architecture_dirs = sorted(
+                child.name for child in platform_dir.iterdir() if child.is_dir() and child.name not in keep_architectures
+            )
+            if unexpected_architecture_dirs:
+                directories = ", ".join(str(BIN_ROOT / platform / name) for name in unexpected_architecture_dirs)
+                raise RepackageError(f"Removed platform architecture directory remains: {directories}")
+
     removed_directories = []
     for platform, directories in SUPPORT_DIRS_BY_PLATFORM.items():
-        if platform not in keep_platforms:
+        if platform not in keep_selection.platforms:
             removed_directories.extend(directories)
 
     for directory in removed_directories:
@@ -250,7 +344,7 @@ def write_zip(root: Path, output_path: Path) -> None:
             archive.write(path, path.relative_to(root).as_posix())
 
 
-def validate_output_zip(output_path: Path, keep_platforms: set[str]) -> None:
+def validate_output_zip(output_path: Path, keep_selection: PlatformSelection) -> None:
     if not output_path.is_file():
         raise RepackageError(f"Output archive was not created: {output_path}")
 
@@ -260,11 +354,11 @@ def validate_output_zip(output_path: Path, keep_platforms: set[str]) -> None:
             if not archive.namelist():
                 raise RepackageError("Output archive is empty")
             safe_extract(archive, root)
-        validate_tree(root, keep_platforms)
+        validate_tree(root, keep_selection)
 
 
 def repackage_archive(input_path: os.PathLike[str] | str, output_path: os.PathLike[str] | str, platforms: Iterable[str]) -> None:
-    keep_platforms = normalize_platforms(platforms)
+    keep_selection = normalize_platforms(platforms)
     input_path = Path(input_path)
     output_path = Path(output_path)
 
@@ -280,13 +374,13 @@ def repackage_archive(input_path: os.PathLike[str] | str, output_path: os.PathLi
             raise RepackageError(f"Missing required file: {GDEXTENSION_PATH}")
 
         gdextension_text = gdextension_path.read_text(encoding="utf-8")
-        gdextension_path.write_text(filter_gdextension_text(gdextension_text, keep_platforms), encoding="utf-8")
+        gdextension_path.write_text(filter_gdextension_text(gdextension_text, keep_selection), encoding="utf-8")
 
-        prune_platform_directories(root, keep_platforms)
-        validate_tree(root, keep_platforms)
+        prune_platform_directories(root, keep_selection)
+        validate_tree(root, keep_selection)
         write_zip(root, output_path)
 
-    validate_output_zip(output_path, keep_platforms)
+    validate_output_zip(output_path, keep_selection)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -299,7 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--platform",
         action="append",
         required=True,
-        help="Platform to keep. Repeat for multiple platforms.",
+        help="Platform or platform.architecture to keep. Repeat for multiple targets.",
     )
     return parser
 

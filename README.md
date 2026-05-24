@@ -1,4 +1,4 @@
-# Sentry Godot Mobile Releases
+# Sentry Godot Repackaged Releases
 
 This repository republishes selected release archives from
 [`getsentry/sentry-godot`](https://github.com/getsentry/sentry-godot) with only
@@ -10,6 +10,7 @@ This repository keeps:
 - Android
 - macOS
 - iOS
+- Linux x86_64
 
 It removes unsupported platform binaries and updates
 `addons/sentry/sentry.gdextension` so the addon no longer references removed
@@ -20,7 +21,7 @@ files.
 Release tags match upstream tags exactly. For example, upstream
 `getsentry/sentry-godot@1.6.0` is republished here as `1.6.0`.
 
-The repackaged asset name adds a `-mobile` suffix:
+The repackaged asset name keeps the historical `-mobile` suffix:
 
 ```text
 sentry-godot-1.6.0+4e3e3e5-mobile.zip
@@ -93,7 +94,8 @@ python3 tools/repackage_sentry_godot.py \
   --output sentry-godot-1.6.0+4e3e3e5-mobile.zip \
   --platform android \
   --platform macos \
-  --platform ios
+  --platform ios \
+  --platform linux.x86_64
 ```
 
 ## Tests
