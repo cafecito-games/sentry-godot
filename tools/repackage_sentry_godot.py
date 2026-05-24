@@ -186,9 +186,11 @@ def safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
 
 
 def prune_platform_directories(root: Path, keep_platforms: set[str]) -> None:
-    for platform in SUPPORTED_PLATFORMS | {NOOP_PLATFORM}:
-        if platform not in keep_platforms:
-            shutil.rmtree(root / BIN_ROOT / platform, ignore_errors=True)
+    bin_root = root / BIN_ROOT
+    if bin_root.is_dir():
+        for child in bin_root.iterdir():
+            if child.is_dir() and child.name not in keep_platforms:
+                shutil.rmtree(child)
 
     for platform, directories in SUPPORT_DIRS_BY_PLATFORM.items():
         if platform in keep_platforms:
@@ -214,7 +216,16 @@ def validate_tree(root: Path, keep_platforms: set[str]) -> None:
         if platform in lowered_text:
             raise RepackageError(f"gdextension still references removed platform: {platform}")
 
-    removed_directories = [BIN_ROOT / platform for platform in removed_platforms]
+    bin_root = root / BIN_ROOT
+    if bin_root.is_dir():
+        unexpected_bin_dirs = sorted(
+            child.name for child in bin_root.iterdir() if child.is_dir() and child.name not in keep_platforms
+        )
+        if unexpected_bin_dirs:
+            directories = ", ".join(str(BIN_ROOT / name) for name in unexpected_bin_dirs)
+            raise RepackageError(f"Removed platform directory remains: {directories}")
+
+    removed_directories = []
     for platform, directories in SUPPORT_DIRS_BY_PLATFORM.items():
         if platform not in keep_platforms:
             removed_directories.extend(directories)

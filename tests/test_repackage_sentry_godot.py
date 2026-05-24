@@ -120,15 +120,16 @@ def create_addon_zip(path: Path, gdextension_text: str = SAMPLE_GDEXTENSION, omi
         "addons/sentry/bin/macos/libsentry.macos.debug.dylib": "macos debug",
         "addons/sentry/bin/macos/libsentry.macos.release.dylib": "macos release",
         "addons/sentry/bin/macos/libSentry.dylib": "macos dependency",
-        "addons/sentry/bin/ios/libsentry.ios.debug.xcframework": "ios debug",
-        "addons/sentry/bin/ios/libsentry.ios.release.xcframework": "ios release",
-        "addons/sentry/bin/ios/Sentry.xcframework": "ios dependency",
+        "addons/sentry/bin/ios/libsentry.ios.debug.xcframework/Info.plist": "ios debug",
+        "addons/sentry/bin/ios/libsentry.ios.release.xcframework/Info.plist": "ios release",
+        "addons/sentry/bin/ios/Sentry.xcframework/Info.plist": "ios dependency",
         "addons/sentry/bin/windows/x86_64/libsentry.windows.debug.x86_64.dll": "windows",
         "addons/sentry/bin/windows/x86_64/crashpad_handler.exe": "windows dependency",
         "addons/sentry/bin/windows/x86_64/crashpad_wer.dll": "windows dependency",
         "addons/sentry/bin/linux/x86_64/libsentry.linux.debug.x86_64.so": "linux",
         "addons/sentry/bin/web/libsentry.web.debug.wasm32.wasm": "web",
         "addons/sentry/bin/noop/libsentry.linux.debug.rv64.so": "noop",
+        "addons/sentry/bin/visionos/libsentry.visionos.debug.xcframework/Info.plist": "visionos",
     }
     with zipfile.ZipFile(path, "w") as archive:
         for name, contents in files.items():
@@ -157,16 +158,31 @@ class ArchiveRepackagingTests(unittest.TestCase):
         self.assertIn("addons/sentry/feedback/user_feedback.gd", names)
         self.assertIn("addons/sentry/bin/android/libsentry.android.debug.arm64.so", names)
         self.assertIn("addons/sentry/bin/macos/libsentry.macos.debug.dylib", names)
-        self.assertIn("addons/sentry/bin/ios/libsentry.ios.debug.xcframework", names)
+        self.assertIn("addons/sentry/bin/ios/libsentry.ios.debug.xcframework/Info.plist", names)
+        self.assertIn("addons/sentry/bin/ios/Sentry.xcframework/Info.plist", names)
         self.assertFalse(any(name.startswith("addons/sentry/web/") for name in names))
         self.assertFalse(any(name.startswith("addons/sentry/bin/windows/") for name in names))
         self.assertFalse(any(name.startswith("addons/sentry/bin/linux/") for name in names))
         self.assertFalse(any(name.startswith("addons/sentry/bin/web/") for name in names))
         self.assertFalse(any(name.startswith("addons/sentry/bin/noop/") for name in names))
+        self.assertFalse(any(name.startswith("addons/sentry/bin/visionos/") for name in names))
         self.assertNotIn("windows", gdextension.lower())
         self.assertNotIn("linux", gdextension.lower())
         self.assertNotIn("web", gdextension.lower())
         self.assertNotIn("noop", gdextension.lower())
+
+    def test_repackage_archive_removes_unknown_future_platform_bin_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_zip = Path(temp_dir) / "input.zip"
+            output_zip = Path(temp_dir) / "output.zip"
+            create_addon_zip(input_zip)
+
+            repackage.repackage_archive(input_zip, output_zip, ["android", "macos", "ios"])
+
+            with zipfile.ZipFile(output_zip) as archive:
+                names = set(archive.namelist())
+
+        self.assertFalse(any(name.startswith("addons/sentry/bin/visionos/") for name in names))
 
     def test_repackage_archive_rejects_missing_gdextension(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -189,8 +205,27 @@ class ArchiveRepackagingTests(unittest.TestCase):
             with self.assertRaisesRegex(repackage.RepackageError, "Missing referenced resource"):
                 repackage.repackage_archive(input_zip, output_zip, ["android"])
 
+    def test_repackage_archive_rejects_unsafe_zip_member_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_zip = Path(temp_dir) / "input.zip"
+            output_zip = Path(temp_dir) / "output.zip"
+            with zipfile.ZipFile(input_zip, "w") as archive:
+                archive.writestr("../escape.txt", "unsafe")
+                archive.writestr("addons/sentry/sentry.gdextension", SAMPLE_GDEXTENSION)
+
+            with self.assertRaisesRegex(repackage.RepackageError, "Unsafe archive member path"):
+                repackage.repackage_archive(input_zip, output_zip, ["android"])
+
 
 class CliTests(unittest.TestCase):
+    def test_build_parser_has_expected_description(self):
+        parser = repackage.build_parser()
+
+        self.assertEqual(
+            "Repackage a Sentry Godot addon zip for selected platforms.",
+            parser.description,
+        )
+
     def test_main_repackages_archive(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_zip = Path(temp_dir) / "input.zip"
