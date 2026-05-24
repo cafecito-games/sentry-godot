@@ -17,6 +17,9 @@ GDEXTENSION_PATH = ADDON_ROOT / "sentry.gdextension"
 BIN_ROOT = ADDON_ROOT / "bin"
 SUPPORT_DIRS_BY_PLATFORM = {"web": [ADDON_ROOT / "web"]}
 RESOURCE_RE = re.compile(r"res://[^\s\"'{}:,]+")
+ARCHITECTURE_FILE_RE_BY_PLATFORM = {
+    "android": re.compile(r"^libsentry\.android\.(?:debug|release)\.([^.]+)\.so(?:\.debug)?$"),
+}
 SUPPORTED_PLATFORMS = {"android", "ios", "linux", "macos", "web", "windows"}
 NOOP_PLATFORM = "noop"
 
@@ -232,6 +235,16 @@ def referenced_resource_paths(text: str) -> set[Path]:
     return {Path(match.group()[len("res://") :]) for match in RESOURCE_RE.finditer(text)}
 
 
+def file_architecture(platform: str, path: Path) -> str | None:
+    pattern = ARCHITECTURE_FILE_RE_BY_PLATFORM.get(platform)
+    if pattern is None:
+        return None
+    match = pattern.match(path.name)
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     destination = destination.resolve()
     for member in archive.infolist():
@@ -268,6 +281,11 @@ def prune_platform_directories(root: Path, keep_selection: PlatformSelection) ->
                 for architecture_dir in child.iterdir():
                     if architecture_dir.is_dir() and architecture_dir.name not in keep_architectures:
                         shutil.rmtree(architecture_dir)
+                        continue
+
+                    architecture = file_architecture(child.name, architecture_dir)
+                    if architecture_dir.is_file() and architecture is not None and architecture not in keep_architectures:
+                        architecture_dir.unlink()
 
     for platform, directories in SUPPORT_DIRS_BY_PLATFORM.items():
         if platform in keep_selection.platforms:
@@ -318,6 +336,17 @@ def validate_tree(root: Path, keep_selection: PlatformSelection) -> None:
             if unexpected_architecture_dirs:
                 directories = ", ".join(str(BIN_ROOT / platform / name) for name in unexpected_architecture_dirs)
                 raise RepackageError(f"Removed platform architecture directory remains: {directories}")
+
+            unexpected_architecture_files = sorted(
+                child.name
+                for child in platform_dir.iterdir()
+                if child.is_file()
+                and (architecture := file_architecture(platform, child)) is not None
+                and architecture not in keep_architectures
+            )
+            if unexpected_architecture_files:
+                files = ", ".join(str(BIN_ROOT / platform / name) for name in unexpected_architecture_files)
+                raise RepackageError(f"Removed platform architecture file remains: {files}")
 
     removed_directories = []
     for platform, directories in SUPPORT_DIRS_BY_PLATFORM.items():

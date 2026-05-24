@@ -30,6 +30,12 @@ linux.release.arm64 = "res://addons/sentry/bin/linux/arm64/libsentry.linux.relea
 
 android.debug.arm64 = "res://addons/sentry/bin/android/libsentry.android.debug.arm64.so"
 android.release.arm64 = "res://addons/sentry/bin/android/libsentry.android.release.arm64.so"
+android.debug.arm32 = "res://addons/sentry/bin/android/libsentry.android.debug.arm32.so"
+android.release.arm32 = "res://addons/sentry/bin/android/libsentry.android.release.arm32.so"
+android.debug.x86_64 = "res://addons/sentry/bin/android/libsentry.android.debug.x86_64.so"
+android.release.x86_64 = "res://addons/sentry/bin/android/libsentry.android.release.x86_64.so"
+android.debug.x86_32 = "res://addons/sentry/bin/android/libsentry.android.debug.x86_32.so"
+android.release.x86_32 = "res://addons/sentry/bin/android/libsentry.android.release.x86_32.so"
 
 ios.debug = "res://addons/sentry/bin/ios/libsentry.ios.debug.xcframework"
 ios.release = "res://addons/sentry/bin/ios/libsentry.ios.release.xcframework"
@@ -135,6 +141,23 @@ class GDExtensionFilteringTests(unittest.TestCase):
         self.assertNotIn("linux.debug.rv64", filtered)
         self.assertNotIn("bin/noop", filtered)
 
+    def test_filter_can_keep_only_android_arm64_entries(self):
+        filtered = repackage.filter_gdextension_text(
+            SAMPLE_GDEXTENSION,
+            ["android.arm64"],
+        )
+
+        self.assertIn("android.debug.arm64", filtered)
+        self.assertIn("android.release.arm64", filtered)
+        self.assertNotIn("android.debug.arm32", filtered)
+        self.assertNotIn("android.release.arm32", filtered)
+        self.assertNotIn("android.debug.x86_32", filtered)
+        self.assertNotIn("android.release.x86_32", filtered)
+        self.assertNotIn("android.debug.x86_64", filtered)
+        self.assertNotIn("android.release.x86_64", filtered)
+        self.assertNotIn("libsentry.android.debug.x86_32.so", filtered)
+        self.assertNotIn("libsentry.android.release.x86_64.so", filtered)
+
     def test_filter_rejects_requested_platform_without_libraries(self):
         with self.assertRaisesRegex(repackage.RepackageError, "visionos"):
             repackage.filter_gdextension_text(
@@ -151,7 +174,23 @@ def create_addon_zip(path: Path, gdextension_text: str = SAMPLE_GDEXTENSION, omi
         "addons/sentry/feedback/user_feedback.gd": "feedback",
         "addons/sentry/web/sentry_web.js": "web support",
         "addons/sentry/bin/android/libsentry.android.debug.arm64.so": "android debug",
+        "addons/sentry/bin/android/libsentry.android.debug.arm64.so.debug": "android debug symbols",
         "addons/sentry/bin/android/libsentry.android.release.arm64.so": "android release",
+        "addons/sentry/bin/android/libsentry.android.release.arm64.so.debug": "android release symbols",
+        "addons/sentry/bin/android/libsentry.android.debug.arm32.so": "android debug",
+        "addons/sentry/bin/android/libsentry.android.debug.arm32.so.debug": "android debug symbols",
+        "addons/sentry/bin/android/libsentry.android.release.arm32.so": "android release",
+        "addons/sentry/bin/android/libsentry.android.release.arm32.so.debug": "android release symbols",
+        "addons/sentry/bin/android/libsentry.android.debug.x86_32.so": "android debug",
+        "addons/sentry/bin/android/libsentry.android.debug.x86_32.so.debug": "android debug symbols",
+        "addons/sentry/bin/android/libsentry.android.release.x86_32.so": "android release",
+        "addons/sentry/bin/android/libsentry.android.release.x86_32.so.debug": "android release symbols",
+        "addons/sentry/bin/android/libsentry.android.debug.x86_64.so": "android debug",
+        "addons/sentry/bin/android/libsentry.android.debug.x86_64.so.debug": "android debug symbols",
+        "addons/sentry/bin/android/libsentry.android.release.x86_64.so": "android release",
+        "addons/sentry/bin/android/libsentry.android.release.x86_64.so.debug": "android release symbols",
+        "addons/sentry/bin/android/sentry_android_godot_plugin.debug.aar": "android plugin",
+        "addons/sentry/bin/android/sentry_android_godot_plugin.release.aar": "android plugin",
         "addons/sentry/bin/macos/libsentry.macos.debug.dylib": "macos debug",
         "addons/sentry/bin/macos/libsentry.macos.release.dylib": "macos release",
         "addons/sentry/bin/macos/libSentry.dylib": "macos dependency",
@@ -240,6 +279,39 @@ class ArchiveRepackagingTests(unittest.TestCase):
         self.assertNotIn("linux.release.arm64", gdextension)
         self.assertNotIn("linux.x86_32", gdextension)
         self.assertNotIn("linux.arm64", gdextension)
+
+    def test_repackage_archive_keeps_only_requested_android_arm64_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_zip = Path(temp_dir) / "input.zip"
+            output_zip = Path(temp_dir) / "output.zip"
+            create_addon_zip(input_zip)
+
+            repackage.repackage_archive(input_zip, output_zip, ["android.arm64"])
+
+            with zipfile.ZipFile(output_zip) as archive:
+                names = set(archive.namelist())
+                gdextension = archive.read("addons/sentry/sentry.gdextension").decode("utf-8")
+
+        self.assertIn("addons/sentry/bin/android/libsentry.android.debug.arm64.so", names)
+        self.assertIn("addons/sentry/bin/android/libsentry.android.debug.arm64.so.debug", names)
+        self.assertIn("addons/sentry/bin/android/libsentry.android.release.arm64.so", names)
+        self.assertIn("addons/sentry/bin/android/libsentry.android.release.arm64.so.debug", names)
+        self.assertIn("addons/sentry/bin/android/sentry_android_godot_plugin.debug.aar", names)
+        self.assertIn("addons/sentry/bin/android/sentry_android_godot_plugin.release.aar", names)
+        self.assertFalse(any("libsentry.android.debug.arm32" in name for name in names))
+        self.assertFalse(any("libsentry.android.release.arm32" in name for name in names))
+        self.assertFalse(any("libsentry.android.debug.x86_32" in name for name in names))
+        self.assertFalse(any("libsentry.android.release.x86_32" in name for name in names))
+        self.assertFalse(any("libsentry.android.debug.x86_64" in name for name in names))
+        self.assertFalse(any("libsentry.android.release.x86_64" in name for name in names))
+        self.assertIn("android.debug.arm64", gdextension)
+        self.assertIn("android.release.arm64", gdextension)
+        self.assertNotIn("android.debug.arm32", gdextension)
+        self.assertNotIn("android.release.arm32", gdextension)
+        self.assertNotIn("android.debug.x86_32", gdextension)
+        self.assertNotIn("android.release.x86_32", gdextension)
+        self.assertNotIn("android.debug.x86_64", gdextension)
+        self.assertNotIn("android.release.x86_64", gdextension)
 
     def test_repackage_archive_removes_unknown_future_platform_bin_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:

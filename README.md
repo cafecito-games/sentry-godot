@@ -7,7 +7,7 @@ the platform bindings needed by Cafecito Games projects.
 Upstream Sentry Godot release assets include bindings for several platforms.
 This repository keeps:
 
-- Android
+- Android arm64
 - macOS
 - iOS
 - Linux x86_64
@@ -92,7 +92,7 @@ Repackage an addon archive directly:
 python3 tools/repackage_sentry_godot.py \
   --input sentry-godot-1.6.0+4e3e3e5.zip \
   --output sentry-godot-1.6.0+4e3e3e5-mobile.zip \
-  --platform android \
+  --platform android.arm64 \
   --platform macos \
   --platform ios \
   --platform linux.x86_64

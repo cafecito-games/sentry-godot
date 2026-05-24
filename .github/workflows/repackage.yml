@@ -75,7 +75,7 @@ jobs:
           python tools/repackage_sentry_godot.py \
             --input "$ASSET_NAME" \
             --output "$OUTPUT_NAME" \
-            --platform android \
+            --platform android.arm64 \
             --platform macos \
             --platform ios \
             --platform linux.x86_64
@@ -86,7 +86,7 @@ jobs:
           {
             echo "Repackaged from upstream getsentry/sentry-godot release: $UPSTREAM_RELEASE_URL"
             echo
-            echo "Only Android, macOS, iOS, and Linux x86_64 bindings are included in this archive."
+            echo "Only Android arm64, macOS, iOS, and Linux x86_64 bindings are included in this archive."
             echo "Unsupported platform binaries and references were removed from addons/sentry/sentry.gdextension."
           } > release-notes.md
 
