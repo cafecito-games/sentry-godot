@@ -27,68 +27,21 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
-      - name: Resolve upstream release asset
+      - name: Fetch upstream release metadata
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import re
-          import sys
-          import urllib.request
+          gh api "repos/getsentry/sentry-godot/releases/tags/$VERSION" > upstream-release.json
 
-          token = os.environ["GITHUB_TOKEN"]
-          version = os.environ["VERSION"]
-          release_api_url = f"https://api.github.com/repos/getsentry/sentry-godot/releases/tags/{version}"
-          request = urllib.request.Request(
-              release_api_url,
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {token}",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-
-          with urllib.request.urlopen(request) as response:
-              release = json.load(response)
-
-          asset_pattern = re.compile(rf"^sentry-godot-{re.escape(version)}\+[0-9a-f]+\.zip$")
-          matches = [
-              asset
-              for asset in release.get("assets", [])
-              if asset_pattern.fullmatch(asset.get("name", ""))
-          ]
-
-          if len(matches) != 1:
-              asset_names = ", ".join(asset.get("name", "<unnamed>") for asset in release.get("assets", []))
-              print(
-                  f"Expected exactly one addon asset matching {asset_pattern.pattern}; "
-                  f"found {len(matches)}. Assets: {asset_names}",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-
-          asset = matches[0]
-          asset_name = asset["name"]
-          if not asset_name.endswith(".zip"):
-              print(f"Resolved asset is not a zip file: {asset_name}", file=sys.stderr)
-              sys.exit(1)
-
-          output_name = f"{asset_name[:-4]}-mobile.zip"
-          values = {
-              "UPSTREAM_TAG": version,
-              "UPSTREAM_RELEASE_URL": release.get("html_url", f"https://github.com/getsentry/sentry-godot/releases/tag/{version}"),
-              "ASSET_NAME": asset_name,
-              "DOWNLOAD_URL": asset["browser_download_url"],
-              "OUTPUT_NAME": output_name,
-          }
-
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-              for key, value in values.items():
-                  env_file.write(f"{key}={value}\n")
-          PY
+      - name: Resolve upstream release asset
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python tools/resolve_upstream_release.py \
+            --release-json upstream-release.json \
+            --version "$VERSION" \
+            --github-env "$GITHUB_ENV"
 
       - name: Download upstream addon
         run: |
