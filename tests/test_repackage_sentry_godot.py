@@ -85,6 +85,7 @@ class GDExtensionFilteringTests(unittest.TestCase):
         self.assertNotIn("bin/linux", filtered)
         self.assertNotIn("bin/web", filtered)
         self.assertNotIn("bin/noop", filtered)
+        self.assertNotIn("noop", filtered)
 
     def test_filter_rejects_requested_platform_without_libraries(self):
         with self.assertRaisesRegex(repackage.RepackageError, "visionos"):

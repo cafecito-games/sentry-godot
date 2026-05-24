@@ -48,6 +48,12 @@ def read_entry(lines: list[str], index: int) -> tuple[list[str], int]:
     return entry, index
 
 
+def mentions_removed_platform(line: str, keep_platforms: set[str]) -> bool:
+    removed_tokens = {"android", "ios", "linux", "macos", "noop", "web", "windows"} - keep_platforms
+    normalized_line = line.lower()
+    return any(token in normalized_line for token in removed_tokens)
+
+
 def filter_section_entries(lines: list[str], keep_platforms: set[str]) -> tuple[list[str], set[str]]:
     output: list[str] = []
     kept_platforms: set[str] = set()
@@ -56,7 +62,8 @@ def filter_section_entries(lines: list[str], keep_platforms: set[str]) -> tuple[
     while index < len(lines):
         key = entry_key(lines[index])
         if key is None:
-            output.append(lines[index])
+            if not mentions_removed_platform(lines[index], keep_platforms):
+                output.append(lines[index])
             index += 1
             continue
 
