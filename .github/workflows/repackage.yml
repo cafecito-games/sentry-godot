@@ -1,11 +1,13 @@
 name: Repackage Sentry Godot Release
 
 on:
+  schedule:
+    - cron: "0 10 * * *"
   workflow_dispatch:
     inputs:
       version:
-        description: "Upstream getsentry/sentry-godot release tag, for example 1.6.0"
-        required: true
+        description: "Optional upstream getsentry/sentry-godot release tag, for example 1.6.0"
+        required: false
         type: string
 
 permissions:
@@ -27,23 +29,40 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
-      - name: Fetch upstream release metadata
+      - name: Fetch release metadata
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ github.event.inputs.version || '' }}
         run: |
-          gh api "repos/getsentry/sentry-godot/releases/tags/$VERSION" > upstream-release.json
+          if [ -n "$VERSION" ]; then
+            gh api "repos/getsentry/sentry-godot/releases/tags/$VERSION" > upstream-release.json
+          else
+            gh api --paginate --slurp "repos/getsentry/sentry-godot/releases?per_page=100" > upstream-releases.json
+            gh release list --limit 1000 --json tagName > local-releases.json
+          fi
 
       - name: Resolve upstream release asset
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ github.event.inputs.version || '' }}
         run: |
-          python tools/resolve_upstream_release.py \
-            --release-json upstream-release.json \
-            --version "$VERSION" \
-            --github-env "$GITHUB_ENV"
+          if [ -n "$VERSION" ]; then
+            python tools/resolve_upstream_release.py \
+              --release-json upstream-release.json \
+              --version "$VERSION" \
+              --github-env "$GITHUB_ENV"
+          else
+            python tools/resolve_upstream_release.py \
+              --upstream-releases-json upstream-releases.json \
+              --local-releases-json local-releases.json \
+              --github-env "$GITHUB_ENV"
+          fi
+
+      - name: Report no new upstream release
+        if: env.SHOULD_RELEASE != 'true'
+        run: echo "No new upstream Sentry Godot release to sync."
 
       - name: Download upstream addon
+        if: env.SHOULD_RELEASE == 'true'
         run: |
           curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
             --header "Authorization: Bearer ${{ github.token }}" \
@@ -51,6 +70,7 @@ jobs:
             "$DOWNLOAD_URL"
 
       - name: Repackage mobile addon
+        if: env.SHOULD_RELEASE == 'true'
         run: |
           python tools/repackage_sentry_godot.py \
             --input "$ASSET_NAME" \
@@ -60,6 +80,7 @@ jobs:
             --platform ios
 
       - name: Write release notes
+        if: env.SHOULD_RELEASE == 'true'
         run: |
           {
             echo "Repackaged from upstream getsentry/sentry-godot release: $UPSTREAM_RELEASE_URL"
@@ -69,6 +90,7 @@ jobs:
           } > release-notes.md
 
       - name: Publish release
+        if: env.SHOULD_RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

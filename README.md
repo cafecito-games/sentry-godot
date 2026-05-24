@@ -31,17 +31,25 @@ are published as GitHub release assets only.
 
 ## Workflow
 
-Run the `Repackage Sentry Godot Release` workflow manually and provide the
-upstream version tag, such as:
+The `Repackage Sentry Godot Release` workflow runs once a day and checks for the
+newest upstream `getsentry/sentry-godot` release that is not already published
+in this repository. If there is nothing new, the workflow exits without
+downloading or publishing an asset.
+
+You can also run the workflow manually. Provide an upstream version tag to force
+that specific release, such as:
 
 ```text
 1.6.0
 ```
 
+Leave the manual version input empty to run the same "sync the newest missing
+release" behavior used by the daily schedule.
+
 The workflow:
 
 1. Runs the local unit tests.
-2. Fetches upstream release metadata with `gh api`.
+2. Fetches upstream and local release metadata with `gh`.
 3. Resolves the addon zip asset with `tools/resolve_upstream_release.py`.
 4. Downloads the upstream addon zip.
 5. Repackages it with `tools/repackage_sentry_godot.py`.
@@ -62,6 +70,18 @@ gh api repos/getsentry/sentry-godot/releases/tags/1.6.0 > upstream-release.json
 python3 tools/resolve_upstream_release.py \
   --release-json upstream-release.json \
   --version 1.6.0 \
+  --github-env /tmp/github-env
+```
+
+Resolve the newest upstream release that is missing locally:
+
+```bash
+gh api --paginate --slurp \
+  "repos/getsentry/sentry-godot/releases?per_page=100" > upstream-releases.json
+gh release list --limit 1000 --json tagName > local-releases.json
+python3 tools/resolve_upstream_release.py \
+  --upstream-releases-json upstream-releases.json \
+  --local-releases-json local-releases.json \
   --github-env /tmp/github-env
 ```
 
