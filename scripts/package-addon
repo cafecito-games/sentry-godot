@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Cut gpm slice archives from an upstream Sentry Godot addon zip.
+set -euo pipefail
+
+# gpm's .gdextension key handling is a release contract, and a Homebrew cask
+# floats, so a local gpm is usually older than CI's. Fail with a sentence rather
+# than a partitioning error.
+readonly REQUIRED_GPM_VERSION="0.5.0"
+
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPOSITORY_ROOT
+readonly UNSUPPORTED_PLATFORMS_FILE="$REPOSITORY_ROOT/packaging/unsupported-platforms.txt"
+readonly PACKAGE_MANIFEST="$REPOSITORY_ROOT/packaging/gpm-package.toml"
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: scripts/package-addon --input <upstream.zip> --version <version> [--out <dir>]
+
+  --input    Upstream getsentry/sentry-godot addon zip.
+  --version  Version to cut, which is the upstream release tag.
+  --out      Directory to write slice archives and gpm-index.toml into.
+             Defaults to dist/ in the repository root.
+USAGE
+  exit 2
+}
+
+input=""
+version=""
+output_dir="$REPOSITORY_ROOT/dist"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --input) input="${2:-}"; shift 2 ;;
+    --version) version="${2:-}"; shift 2 ;;
+    --out) output_dir="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "error: unknown argument: $1" >&2; usage ;;
+  esac
+done
+
+[ -n "$input" ] || { echo "error: --input is required" >&2; usage; }
+[ -n "$version" ] || { echo "error: --version is required" >&2; usage; }
+
+if [ ! -f "$input" ]; then
+  echo "error: input archive does not exist: $input" >&2
+  exit 1
+fi
+
+require_gpm_version() {
+  if ! command -v gpm >/dev/null 2>&1; then
+    echo "error: gpm is not on PATH; install it with 'brew install cafecito-games/tap/gpm'" >&2
+    exit 1
+  fi
+
+  local installed
+  installed="$(gpm --version | awk '{print $NF}')"
+
+  local oldest
+  oldest="$(printf '%s\n%s\n' "$REQUIRED_GPM_VERSION" "$installed" | sort -V | head -n 1)"
+  if [ "$oldest" != "$REQUIRED_GPM_VERSION" ]; then
+    echo "error: gpm $REQUIRED_GPM_VERSION or newer is required to cut a release; found $installed" >&2
+    exit 1
+  fi
+}
+
+require_gpm_version
+
+# Nothing is curated here. Everything upstream ships becomes a slice, and a
+# project downloads only the slices it declares, so the only platforms left out
+# are the ones gpm cannot package at all.
+drop_arguments=()
+while IFS= read -r line; do
+  platform="${line%%#*}"
+  platform="$(printf '%s' "$platform" | tr -d '[:space:]')"
+  [ -n "$platform" ] && drop_arguments+=(--drop-platform "$platform")
+done < "$UNSUPPORTED_PLATFORMS_FILE"
+
+stage_dir="$(mktemp -d)"
+trap 'rm -rf "$stage_dir"' EXIT
+
+# gpm has no exclusion mechanism: everything the .gdextension does not claim
+# lands in core, which every consumer downloads on every platform. So package
+# from a staged tree rather than from the upstream archive directly.
+# The list is normally empty, and expanding an empty array trips `set -u` on
+# bash 3.2, which is what macOS ships.
+python3 "$REPOSITORY_ROOT/tools/stage_addon_tree.py" \
+  --input "$input" \
+  --output-dir "$stage_dir/addon" \
+  ${drop_arguments[@]+"${drop_arguments[@]}"}
+
+cp "$PACKAGE_MANIFEST" "$stage_dir/addon/gpm-package.toml"
+
+mkdir -p "$output_dir"
+output_dir="$(cd "$output_dir" && pwd)"
+
+gpm package --dir "$stage_dir/addon" --out "$output_dir" --version "$version"
+
+python3 "$REPOSITORY_ROOT/tools/verify_gpm_cut.py" \
+  --dist "$output_dir" \
+  --version "$version" \
+  --staged-gdextension "$stage_dir/addon/addons/sentry/sentry.gdextension"

@@ -13,6 +13,9 @@ on:
 permissions:
   contents: write
 
+env:
+  GPM_VERSION: "0.5.0"
+
 jobs:
   repackage:
     runs-on: ubuntu-latest
@@ -28,6 +31,21 @@ jobs:
 
       - name: Run tests
         run: python -m unittest discover -s tests -v
+
+      - name: Install gpm
+        run: |
+          archive="gpm_${GPM_VERSION}_linux_amd64.tar.gz"
+          base="https://github.com/cafecito-games/godot-package-manager/releases/download/v$GPM_VERSION"
+          curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors -o "$archive" "$base/$archive"
+          curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors -o checksums.txt "$base/checksums.txt"
+          grep " $archive\$" checksums.txt | sha256sum --check -
+          tar -xzf "$archive" gpm
+          install -m 0755 gpm /usr/local/bin/gpm
+          rm -f "$archive" checksums.txt gpm
+          gpm --version
+
+      - name: Run packaging self-test
+        run: scripts/test-package-addon
 
       - name: Fetch release metadata
         env:
@@ -69,25 +87,58 @@ jobs:
             --output "$ASSET_NAME" \
             "$DOWNLOAD_URL"
 
-      - name: Repackage addon
+      - name: Package gpm slices
         if: env.SHOULD_RELEASE == 'true'
         run: |
-          python tools/repackage_sentry_godot.py \
+          scripts/package-addon \
             --input "$ASSET_NAME" \
-            --output "$OUTPUT_NAME" \
-            --platform android.arm64 \
-            --platform macos \
-            --platform ios \
-            --platform linux.x86_64
+            --version "$UPSTREAM_TAG" \
+            --out dist
 
       - name: Write release notes
         if: env.SHOULD_RELEASE == 'true'
         run: |
+          summary="$(python - dist/gpm-index.toml <<'INDEX'
+          import sys, tomllib
+
+          with open(sys.argv[1], "rb") as index_file:
+              index = tomllib.load(index_file)
+
+          lines = [f"- `{name}`" for name in sorted(index["slices"])]
+          for name in sorted(index.get("artifacts", {})):
+              lines.append(f"- `shared:{name}`, pulled in automatically by that platform's slices")
+          lines.append("")
+          lines.append(f'This index is format {index["format"]}.')
+          print("\n".join(lines))
+          INDEX
+          )"
+
           {
             echo "Repackaged from upstream getsentry/sentry-godot release: $UPSTREAM_RELEASE_URL"
             echo
-            echo "Only Android arm64, macOS, iOS, and Linux x86_64 bindings are included in this archive."
-            echo "Unsupported platform binaries and references were removed from addons/sentry/sentry.gdextension."
+            echo "Published as gpm slice archives alongside \`gpm-index.toml\`, so a project"
+            echo "downloads \`core\` plus only the platforms it declares."
+            echo
+            echo "Declare it in \`addons.toml\`:"
+            echo
+            echo '```toml'
+            echo '[addons.sentry]'
+            echo 'source = "github-release"'
+            echo 'repo = "cafecito-games/sentry-godot"'
+            echo "version = \"$UPSTREAM_TAG\""
+            echo '```'
+            echo
+            echo "Archives in this release:"
+            echo
+            echo "$summary"
+            echo
+            echo "Every platform upstream ships is published. A project downloads the"
+            echo "slices it declares plus its own host slice, so nothing here has to be"
+            echo "revisited when a project adds an export target."
+            echo
+            echo "Installing a format 2 index needs gpm 0.5.0 or newer. An older gpm"
+            echo "refuses it with \`unsupported index format 2\` rather than installing"
+            echo "an incomplete tree."
           } > release-notes.md
 
       - name: Publish release
@@ -101,9 +152,20 @@ jobs:
             gh release edit "$UPSTREAM_TAG" \
               --title "$title" \
               --notes-file release-notes.md
-            gh release upload "$UPSTREAM_TAG" "$OUTPUT_NAME" --clobber
+
+            # A consumer resolves each slice by joining the index's file name to
+            # the directory the index came from, so assets from an older cut of
+            # this tag are dead weight at best and confusing at worst.
+            published="$(ls dist)"
+            gh release view "$UPSTREAM_TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+              if ! grep -qxF "$asset" <<<"$published"; then
+                gh release delete-asset "$UPSTREAM_TAG" "$asset" --yes
+              fi
+            done
+
+            gh release upload "$UPSTREAM_TAG" dist/* --clobber
           else
-            gh release create "$UPSTREAM_TAG" "$OUTPUT_NAME" \
+            gh release create "$UPSTREAM_TAG" dist/* \
               --title "$title" \
               --notes-file release-notes.md
           fi

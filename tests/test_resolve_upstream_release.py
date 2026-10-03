@@ -55,7 +55,7 @@ class ResolveUpstreamReleaseTests(unittest.TestCase):
         self.assertEqual("1.6.0", values["UPSTREAM_TAG"])
         self.assertEqual("sentry-godot-1.6.0+4e3e3e5.zip", values["ASSET_NAME"])
         self.assertEqual("https://example.test/sentry-godot-1.6.0+4e3e3e5.zip", values["DOWNLOAD_URL"])
-        self.assertEqual("sentry-godot-1.6.0+4e3e3e5-mobile.zip", values["OUTPUT_NAME"])
+        self.assertNotIn("OUTPUT_NAME", values)
         self.assertEqual(
             "https://github.com/getsentry/sentry-godot/releases/tag/1.6.0",
             values["UPSTREAM_RELEASE_URL"],
@@ -85,7 +85,6 @@ class ResolveUpstreamReleaseTests(unittest.TestCase):
             "UPSTREAM_RELEASE_URL": "https://example.test/release",
             "ASSET_NAME": "sentry-godot-1.6.0+4e3e3e5.zip",
             "DOWNLOAD_URL": "https://example.test/addon.zip",
-            "OUTPUT_NAME": "sentry-godot-1.6.0+4e3e3e5-mobile.zip",
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -100,7 +99,6 @@ class ResolveUpstreamReleaseTests(unittest.TestCase):
                     "UPSTREAM_RELEASE_URL=https://example.test/release",
                     "ASSET_NAME=sentry-godot-1.6.0+4e3e3e5.zip",
                     "DOWNLOAD_URL=https://example.test/addon.zip",
-                    "OUTPUT_NAME=sentry-godot-1.6.0+4e3e3e5-mobile.zip",
                 ],
                 env_path.read_text(encoding="utf-8").splitlines(),
             )
@@ -129,7 +127,7 @@ class ResolveUpstreamReleaseTests(unittest.TestCase):
 
             self.assertEqual(0, exit_code)
             self.assertIn(
-                "OUTPUT_NAME=sentry-godot-1.6.0+4e3e3e5-mobile.zip",
+                "ASSET_NAME=sentry-godot-1.6.0+4e3e3e5.zip",
                 github_env.read_text(encoding="utf-8"),
             )
 

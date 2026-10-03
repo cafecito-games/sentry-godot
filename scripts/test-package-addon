@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Cut a synthetic addon archive twice and check the result is publishable.
+#
+# This needs gpm on PATH, unlike the unit tests. It covers what the unit tests
+# cannot: that gpm partitions this addon's .gdextension the way the published
+# platform list promises, and that two cuts of one tree write identical bytes.
+set -euo pipefail
+
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPOSITORY_ROOT
+readonly VERSION="9.9.9"
+
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+
+python3 "$REPOSITORY_ROOT/tests/upstream_fixture.py" --output "$work_dir/upstream.zip" >/dev/null
+
+"$REPOSITORY_ROOT/scripts/package-addon" \
+  --input "$work_dir/upstream.zip" \
+  --version "$VERSION" \
+  --out "$work_dir/cut" >/dev/null
+
+"$REPOSITORY_ROOT/scripts/package-addon" \
+  --input "$work_dir/upstream.zip" \
+  --version "$VERSION" \
+  --out "$work_dir/cut-again" >/dev/null
+
+if ! diff --recursive "$work_dir/cut" "$work_dir/cut-again" >/dev/null; then
+  echo "error: two cuts of the same tree differ, so the packaging is not reproducible" >&2
+  diff --recursive "$work_dir/cut" "$work_dir/cut-again" >&2 || true
+  exit 1
+fi
+
+core_listing="$(unzip -Z1 "$work_dir/cut/sentry-$VERSION-core.zip")"
+if ! grep -qx "sentry.gdextension" <<<"$core_listing"; then
+  echo "error: core slice is missing sentry.gdextension" >&2
+  exit 1
+fi
+
+for forbidden in $(grep -E '^(bin|web)/' <<<"$core_listing" || true); do
+  echo "error: core slice carries platform payload: $forbidden" >&2
+  exit 1
+done
+
+# The .aar files are claimed generically for android, so gpm publishes them once
+# as a shared artifact that every ABI slice pulls in. A regression here either
+# leaves them in core, which every consumer downloads on every platform, or
+# stores them once per ABI, or leaves an ABI without the plugin.
+shared_listing="$(unzip -Z1 "$work_dir/cut/sentry-$VERSION-shared-android.zip")"
+for required in \
+  "bin/android/sentry_android_godot_plugin.release.aar" \
+  "bin/android/sentry_android_godot_plugin.debug.aar"; do
+  if ! grep -qx "$required" <<<"$shared_listing"; then
+    echo "error: shared android artifact is missing $required" >&2
+    exit 1
+  fi
+done
+
+for architecture in arm32 arm64 x86_32 x86_64; do
+  slice_listing="$(unzip -Z1 "$work_dir/cut/sentry-$VERSION-android.$architecture.zip")"
+  if grep -q '\.aar$' <<<"$slice_listing"; then
+    echo "error: android.$architecture slice carries the plugin instead of sharing it" >&2
+    exit 1
+  fi
+done
+
+if [ -e "$work_dir/cut/sentry-$VERSION-android.zip" ]; then
+  echo "error: a generic android slice was published beside the ABI slices" >&2
+  exit 1
+fi
+
+echo "Packaging self-test passed: reproducible cut of $VERSION verified"
