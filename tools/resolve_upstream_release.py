@@ -16,7 +16,6 @@ ENV_KEYS = (
     "UPSTREAM_RELEASE_URL",
     "ASSET_NAME",
     "DOWNLOAD_URL",
-    "OUTPUT_NAME",
 )
 
 
@@ -88,7 +87,6 @@ def resolve_release(release: Mapping[str, Any], version: str) -> dict[str, str]:
         "UPSTREAM_RELEASE_URL": release_url,
         "ASSET_NAME": asset_name,
         "DOWNLOAD_URL": download_url,
-        "OUTPUT_NAME": f"{asset_name[:-4]}-mobile.zip",
     }
 
 
@@ -228,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if values["SHOULD_RELEASE"] == "true":
-        print(f"Resolved {values['ASSET_NAME']} -> {values['OUTPUT_NAME']}")
+        print(f"Resolved {values['ASSET_NAME']} for upstream tag {values['UPSTREAM_TAG']}")
     else:
         print("No new upstream release to sync")
     return 0

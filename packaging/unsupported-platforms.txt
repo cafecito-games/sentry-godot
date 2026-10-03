@@ -1,0 +1,9 @@
+# Platforms upstream getsentry/sentry-godot ships that this repository cannot
+# republish, one per line. Everything not listed here is published as a gpm
+# slice, so projects pick their platforms in their own addons.toml and nothing
+# here has to be revisited when a project adds an export target.
+#
+# The list is empty, and it is an escape hatch rather than a curated set: a
+# platform belongs here only when gpm cannot package it at all. Web was listed
+# until gpm learned Godot's "threads" key variant, so upstream's
+# web.debug.threads.wasm32 is partitioned into web.wasm32 like any other key.

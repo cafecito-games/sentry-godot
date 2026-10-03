@@ -1,0 +1,25 @@
+# Kept out of the repository root on purpose: a bare `gpm package` must fail
+# instead of publishing the unstaged tree, which still holds the noop
+# placeholder libraries. Cut releases with scripts/package-addon, which stages
+# the addon tree and copies this file in.
+
+[package]
+name       = "sentry"
+addon_path = "addons/sentry"
+
+# Always overridden by `gpm package --version <upstream tag>`; nothing is cut
+# from this placeholder.
+version    = "0.0.0"
+
+# Files no [libraries] or [dependencies] key references, which would otherwise
+# fall into core and be downloaded by every consumer on every platform.
+[package.slices]
+# One pair of .aar files serves all four Android ABIs. Naming the platform
+# generically rather than naming the ABI slices publishes them once as a shared
+# artifact that every android.* slice pulls in, so no ABI ships without the
+# plugin and the bytes are stored once.
+android      = ["bin/android/*.aar"]
+
+# The JavaScript bundle the web library loads at runtime. 1 MB, and useless
+# anywhere but web.
+"web.wasm32" = ["web/**"]
